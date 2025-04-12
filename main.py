@@ -13,6 +13,7 @@ from src.core.browser import BrowserThread
 from src.core.pages.home import HomePage
 from src.core.pages.setting import SettingsPage
 from src.core.pages.tools import ToolsPage
+from src.core.pages.video import VideoPage
 from src.logger.logger import Logger
 
 # 设置日志文件路径
@@ -140,12 +141,18 @@ class XiaohongshuUI(QMainWindow):
         tools_btn.setCheckable(True)
         tools_btn.clicked.connect(lambda: self.switch_page(1))
 
+        # 添加视频发布按钮
+        video_btn = QPushButton("🎥")
+        video_btn.setCheckable(True)
+        video_btn.clicked.connect(lambda: self.switch_page(2))
+
         settings_btn = QPushButton("⚙️")
         settings_btn.setCheckable(True)
-        settings_btn.clicked.connect(lambda: self.switch_page(2))
+        settings_btn.clicked.connect(lambda: self.switch_page(3))
 
         sidebar_layout.addWidget(home_btn)
         sidebar_layout.addWidget(tools_btn)
+        sidebar_layout.addWidget(video_btn)
         sidebar_layout.addWidget(settings_btn)
         sidebar_layout.addStretch()
 
@@ -156,14 +163,16 @@ class XiaohongshuUI(QMainWindow):
         self.stack = QStackedWidget()
         main_layout.addWidget(self.stack)
 
-        # 创建并添加三个页面
+        # 创建并添加页面
         self.home_page = HomePage(self)
         self.tools_page = ToolsPage(self)
+        self.video_page = VideoPage(self)
         self.settings_page = SettingsPage(self)
 
         # 将页面添加到堆叠窗口
         self.stack.addWidget(self.home_page)
         self.stack.insertWidget(1, self.tools_page)
+        self.stack.insertWidget(2, self.video_page)
         self.stack.addWidget(self.settings_page)
 
         # 创建浏览器线程

@@ -6,9 +6,9 @@ import os
 import sys
 import logging
 import asyncio
-from PyQt6.QtWidgets import QInputDialog, QLineEdit
+from PyQt6.QtWidgets import QInputDialog, QLineEdit, QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog
 from PyQt6.QtCore import QObject, pyqtSignal, QMetaObject, Qt, QThread, pyqtSlot
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QPixmap
 log_path = os.path.expanduser('~/Desktop/xhsai_error.log')
 logging.basicConfig(filename=log_path, level=logging.DEBUG)
 
@@ -341,6 +341,65 @@ class XiaohongshuPoster:
         await asyncio.sleep(1)
         # await self.page.click(".el-button.publishBtn")
 
+    async def post_video(self, title, content, video_path=None):
+        """发布视频
+        Args:
+            title: 视频标题
+            content: 视频描述
+            video_path: 视频文件路径
+        """
+        # 检查视频文件格式
+        if video_path:
+            allowed_formats = [".mp4", ".mov", ".avi"]
+            if not any(video_path.lower().endswith(fmt) for fmt in allowed_formats):
+                raise ValueError(f"不支持的视频格式。支持的格式：{', '.join(allowed_formats)}")
+            
+            # 检查文件是否存在
+            if not os.path.exists(video_path):
+                raise FileNotFoundError(f"视频文件不存在：{video_path}")
+        
+        await self.ensure_browser()  # 确保浏览器已初始化
+        print("点击发布按钮")
+        try:
+            # 点击发布按钮
+            await self.page.click(".btn.el-tooltip__trigger.el-tooltip__trigger")
+
+            # 切换到上传视频
+            await asyncio.sleep(1)
+            tabs = await self.page.query_selector_all(".creator-tab")
+            if len(tabs) > 2:  # 确保有视频上传选项
+                await tabs[2].click()
+            else:
+                raise Exception("找不到视频上传选项")
+            await asyncio.sleep(1)
+
+            # 上传视频
+            if video_path:
+                async with self.page.expect_file_chooser() as fc_info:
+                    await self.page.click(".upload-input")
+                file_chooser = await fc_info.value
+                await file_chooser.set_files(video_path)
+                print("开始上传视频...")
+                await asyncio.sleep(3)  # 等待视频上传开始
+                
+                # 等待上传完成（可以根据实际情况调整等待时间或添加上传进度检测）
+                await self.page.wait_for_selector(".upload-success", timeout=300000)  # 5分钟超时
+                print("视频上传完成")
+
+            # 输入标题
+            await self.page.fill(".d-text", title)
+
+            # 输入描述
+            await self.page.fill(".ql-editor", content)
+
+            # 发布
+            await asyncio.sleep(1)
+            # await self.page.click(".el-button.publishBtn")
+            
+        except Exception as e:
+            logging.error(f"发布视频时出错: {str(e)}")
+            raise Exception(f"发布视频失败: {str(e)}")
+
     async def close(self, force=False):
         """关闭浏览器
         Args:
@@ -365,3 +424,94 @@ class XiaohongshuPoster:
         """确保浏览器已初始化"""
         if not self.playwright:
             await self.initialize()
+
+
+class VideoPreviewWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(5)
+        
+        # 创建预览图片标签
+        self.preview_label = QLabel()
+        self.preview_label.setMinimumHeight(300)
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_label.setStyleSheet("background-color: #f0f0f0; border-radius: 4px;")
+        
+        # 添加文件选择按钮
+        self.file_controls = QHBoxLayout()
+        self.file_controls.setContentsMargins(10, 5, 10, 5)
+        self.select_button = QPushButton("选择视频")
+        
+        # 设置按钮样式
+        button_style = """
+            QPushButton {
+                background-color: #ff2442;
+                color: white;
+                border: none;
+                padding: 5px 15px;
+                border-radius: 4px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #ff4d66;
+            }
+            QPushButton:pressed {
+                background-color: #e61e3a;
+            }
+        """
+        self.select_button.setStyleSheet(button_style)
+        self.select_button.clicked.connect(self.select_video)
+        
+        self.file_controls.addWidget(self.select_button)
+        self.file_controls.addStretch()
+        
+        # 添加预览控制按钮
+        self.preview_controls = QHBoxLayout()
+        self.preview_controls.setContentsMargins(10, 5, 10, 5)
+        self.preview_button = QPushButton("预览")
+        self.preview_button.setStyleSheet(button_style)
+        self.preview_button.clicked.connect(self.play_video)
+        
+        self.preview_controls.addWidget(self.preview_button)
+        self.preview_controls.addStretch()
+        
+        self.layout.addWidget(self.preview_label)
+        self.layout.addLayout(self.file_controls)
+        self.layout.addLayout(self.preview_controls)
+        
+        self.video_path = None
+    
+    def select_video(self):
+        # 打开文件选择对话框
+        file_dialog = QFileDialog()
+        file_dialog.setNameFilter("视频文件 (*.mp4 *.mov *.avi)")
+        if file_dialog.exec():
+            selected_files = file_dialog.selectedFiles()
+            if selected_files:
+                video_path = selected_files[0]
+                # 验证文件格式
+                allowed_formats = [".mp4", ".mov", ".avi"]
+                if any(video_path.lower().endswith(fmt) for fmt in allowed_formats):
+                    self.set_video(video_path)
+                else:
+                    TipWindow.info("不支持的视频格式，请选择 MP4、MOV 或 AVI 格式的视频文件。")
+
+    def set_video(self, video_path):
+        self.video_path = video_path
+        # 显示视频文件名
+        self.preview_label.setText("视频已选择：" + os.path.basename(video_path))
+        # 启用预览按钮
+        self.preview_button.setEnabled(True)
+    
+    def play_video(self):
+        # 使用系统默认播放器打开视频
+        if self.video_path and os.path.exists(self.video_path):
+            if sys.platform == "darwin":  # macOS
+                os.system(f"open {self.video_path}")
+            elif sys.platform == "win32":  # Windows
+                os.system(f"start {self.video_path}")
+    
+    def stop_video(self):
+        pass  # 不需要实现停止功能
