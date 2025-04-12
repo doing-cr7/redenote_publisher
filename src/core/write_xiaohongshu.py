@@ -46,6 +46,39 @@ class VerificationCodeHandler(QObject):
         else:
             self.code = ""
 
+def filter_cookies(cookies):
+    """
+    筛选需要的cookie，抛弃不需要的cookie。
+    
+    Args:
+        cookies (list): 输入的cookie列表，每个cookie是一个字典。
+        
+    Returns:
+        str: 筛选后的cookie字符串，格式为 "name1=value1; name2=value2; ..."
+    """
+    # 需要保留的cookie名称
+    required_cookie_names = [
+        "a1",
+        "access-token-creator.xiaohongshu.com",
+        "customer-sso-sid",
+        "customerClientId",
+        "galaxy_creator_session_id",
+        "galaxy.creator.beaker.session.id",
+        "gid",
+        "webId",
+        "x-user-id-creator.xiaohongshu.com"
+    ]
+    
+    # 筛选需要的cookie
+    filtered_cookies = {}
+    for cookie in cookies:
+        if cookie["name"] in required_cookie_names:
+            filtered_cookies[cookie["name"]] = cookie["value"]
+    
+    # 将筛选后的cookie转换为字符串格式
+    result = "; ".join([f"{name}={value}" for name, value in filtered_cookies.items()])
+    return result
+
 class XiaohongshuPoster:
     def __init__(self):
         self.playwright = None
@@ -233,13 +266,25 @@ class XiaohongshuPoster:
                 logging.debug(f"加载cookies失败: {str(e)}")
 
     async def _save_cookies(self):
-        """保存cookies到文件"""
+        """保存cookies"""
         try:
+            # 原有的保存逻辑
             cookies = await self.context.cookies()
-            with open(self.cookies_file, 'w') as f:
-                json.dump(cookies, f)
+            self.cookie = ';'.join([f"{c['name']}={c['value']}" for c in cookies])
+            
+            # 新增：使用 filter_cookies 处理 cookies 并发送信号
+            try:
+                filtered_cookie = filter_cookies(cookies)
+                if filtered_cookie:
+                    print(f"成功提取关键 cookie: {filtered_cookie}")
+                    # 发送信号通知 HomePage
+                    if hasattr(self, 'on_cookies_saved'):
+                        await self.on_cookies_saved(filtered_cookie)
+            except Exception as e:
+                print(f"处理 cookie 时出错（不影响主功能）: {str(e)}")
+                
         except Exception as e:
-            logging.debug(f"保存cookies失败: {str(e)}")
+            print(f"保存cookies失败: {str(e)}")
 
     async def login(self, phone, country_code="+86"):
         """登录小红书"""

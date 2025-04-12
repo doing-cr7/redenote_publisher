@@ -11,6 +11,9 @@ from src.core.processor.content import ContentGeneratorThread
 from src.core.processor.img import ImageProcessorThread
 from src.core.config.accounts import AccountManager
 from src.core.xhs.xhs_client import XhsClient
+from playwright.sync_api import sync_playwright
+import threading
+import time
 
 class HomePage(QWidget):
     """主页类"""
@@ -468,9 +471,24 @@ class HomePage(QWidget):
             self.parent.update_preview_button("🎯 预览发布", True)
             TipWindow(self.parent, "✅ 登录成功").show()
             
-            # 注意：XiaohongshuPoster 类自己会在登录成功后调用 _save_cookies 方法
-            # 我们不需要在这里尝试获取 cookie，因为 poster 已经处理了
-            print("登录成功，cookie 由 XiaohongshuPoster 自动保存")
+            # 设置 cookie 保存回调
+            async def on_cookies_saved(filtered_cookie):
+                try:
+                    # 使用手机号作为账号名称
+                    phone = self.phone_input.text().strip()
+                    account_name = f"phone_{phone}" if phone else f"account_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    
+                    # 直接保存到配置文件
+                    if account_name not in self.account_manager.config:
+                        self.account_manager.config[account_name] = {}
+                    self.account_manager.config[account_name]['cookies'] = filtered_cookie
+                    self.account_manager.save_config()
+                    print(f"成功保存过滤后的 cookie: {account_name}")
+                except Exception as e:
+                    print(f"保存过滤后的 cookie 失败（不影响主功能）: {str(e)}")
+            
+            # 设置回调
+            poster.on_cookies_saved = on_cookies_saved
             
         except Exception as e:
             # 主要功能的错误才需要提示
@@ -749,3 +767,60 @@ class HomePage(QWidget):
         except Exception as e:
             print(f"加载Cookie失败（不影响使用）: {str(e)}")  # 仅打印日志
         return False
+
+    def extract_cookies_from_poster(self, poster):
+        """从 poster 对象中提取 cookies 并保存到配置管理中"""
+        try:
+            # 启动一个新线程来处理 cookie 提取，避免阻塞主线程
+            threading.Thread(target=self._extract_cookies_thread, args=(poster,), daemon=True).start()
+        except Exception as e:
+            print(f"提取 cookie 时出错（不影响主功能）: {str(e)}")
+
+    def _extract_cookies_thread(self, poster):
+        """在单独的线程中提取 cookies"""
+        try:
+            # 等待一段时间确保登录完成
+            time.sleep(2)
+            
+            # 使用 playwright 从浏览器中提取 cookies
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context()
+                page = context.new_page()
+                
+                # 打开小红书网站
+                page.goto("https://www.xiaohongshu.com")
+                
+                # 直接从新页面获取 cookies
+                cookies = context.cookies()
+                
+                # 关闭浏览器
+                browser.close()
+                
+                # 格式化 cookies
+                cookie_string = "; ".join([
+                    f"{cookie['name']}={cookie['value']}" 
+                    for cookie in cookies 
+                    if cookie.get('domain', '').endswith('.xiaohongshu.com')
+                ])
+                
+                if cookie_string:
+                    # 使用手机号作为账号名称
+                    phone = self.phone_input.text().strip()
+                    account_name = f"phone_{phone}" if phone else f"account_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    
+                    # 绕过验证直接保存
+                    try:
+                        # 直接保存到配置文件
+                        if account_name not in self.account_manager.config:
+                            self.account_manager.config[account_name] = {}
+                        self.account_manager.config[account_name]['cookies'] = cookie_string
+                        self.account_manager.save_config()
+                        print(f"成功提取并保存 cookie: {account_name}")
+                    except Exception as e:
+                        print(f"保存 cookie 失败: {str(e)}")
+                else:
+                    print("未能提取到有效的 cookie")
+                
+        except Exception as e:
+            print(f"提取 cookie 线程出错（不影响主功能）: {str(e)}")

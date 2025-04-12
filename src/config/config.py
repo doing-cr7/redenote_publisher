@@ -103,3 +103,30 @@ class Config:
             self.config['title_edit'] = {}
         self.config['title_edit']['author'] = author
         self.save_config()
+
+    def add_account(self, account_name, cookie):
+        """添加账号"""
+        if not account_name.startswith(('account_', 'phone_')):
+            account_name = f"account_{account_name}"
+        self.set_account_cookies(cookie, account_name)
+
+    def get_latest_account(self):
+        """获取最新添加的账号"""
+        accounts = self.get_all_accounts()
+        if accounts:
+            try:
+                # 按时间戳排序
+                return max(accounts, key=lambda x: x.split('_')[1] if '_' in x else '')
+            except Exception as e:
+                print(f"排序账号失败: {str(e)}")
+                # 如果排序失败，返回第一个账号
+                return accounts[0]
+        return None
+
+    def get_all_accounts(self):
+        """获取所有账号"""
+        accounts = []
+        for key in self.config.keys():
+            if key.startswith('account_') or key.startswith('phone_'):
+                accounts.append(key)
+        return accounts

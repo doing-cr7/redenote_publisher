@@ -1,23 +1,74 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
                            QFileDialog, QProgressBar, QLineEdit, QTextEdit, QFrame,
-                           QScrollArea)
+                           QScrollArea, QDateTimeEdit, QCheckBox, QDialog)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QImage, QPixmap
 import cv2
 import os
 import requests
 import json
-from src.config.config import Config  # 添加配置导入
-from src.core.alert import TipWindow  # 添加这行导入
+from src.config.config import Config
+from src.core.alert import TipWindow
+from src.core.config.accounts import AccountManager
+from src.core.xhs.client import XhsClientManager
+from datetime import datetime, timedelta
+from pathlib import Path
+
+# 首先定义 PreviewDialog 类
+class PreviewDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.init_ui()
+        
+    def init_ui(self):
+        self.setWindowTitle("发布预览")
+        layout = QVBoxLayout(self)
+        
+        # 预览内容
+        self.title_label = QLabel()
+        self.content_text = QTextEdit()
+        self.content_text.setReadOnly(True)
+        
+        # 视频预览
+        self.video_widget = QLabel()
+        self.video_widget.setMinimumSize(400, 300)
+        
+        layout.addWidget(QLabel("标题:"))
+        layout.addWidget(self.title_label)
+        layout.addWidget(QLabel("内容:"))
+        layout.addWidget(self.content_text)
+        layout.addWidget(QLabel("视频预览:"))
+        layout.addWidget(self.video_widget)
+        
+        # 确认按钮
+        btn = QPushButton("确认")
+        btn.clicked.connect(self.accept)
+        layout.addWidget(btn)
+        
+    def set_content(self, title, content, tags, video_path):
+        self.title_label.setText(title)
+        self.content_text.setPlainText(f"{content}\n\n{tags}")
+        
+        # 显示视频第一帧
+        cap = cv2.VideoCapture(video_path)
+        ret, frame = cap.read()
+        if ret:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = frame.shape
+            bytes_per_line = ch * w
+            image = QImage(frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            self.video_widget.setPixmap(QPixmap.fromImage(image))
+        cap.release()
+
 
 class VideoPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.parent = parent  # 保存父窗口引用
-        self.config = Config()  # 初始化配置
+        self.parent = parent
+        self.config = Config()
         self.init_video()
         self.init_ui()
-        self.load_default_author()  # 加载默认作者
+        self.load_default_author()
 
     def load_default_author(self):
         """加载默认作者"""
@@ -142,6 +193,23 @@ class VideoPage(QWidget):
         self.publish_btn = QPushButton("发布视频")
         self.publish_btn.setEnabled(False)
         self.publish_btn.clicked.connect(self.publish_video)
+        
+        # 添加定时发布控件
+        schedule_layout = QHBoxLayout()
+        self.schedule_checkbox = QCheckBox("定时发布")
+        self.schedule_time = QDateTimeEdit()
+        self.schedule_time.setDateTime(
+            datetime.now() + timedelta(minutes=5)
+        )
+        self.schedule_time.setEnabled(False)
+        
+        self.schedule_checkbox.stateChanged.connect(
+            lambda state: self.schedule_time.setEnabled(state == Qt.CheckState.Checked)
+        )
+        
+        schedule_layout.addWidget(self.schedule_checkbox)
+        schedule_layout.addWidget(self.schedule_time)
+        right_layout.addLayout(schedule_layout)
         
         video_layout.addWidget(self.video_label)
         video_layout.addWidget(self.play_btn)
@@ -285,10 +353,149 @@ class VideoPage(QWidget):
         super().closeEvent(event)
 
     def publish_video(self):
-        # 这里实现视频发布逻辑
-        self.progress.show()
-        # TODO: 实现视频上传和发布功能
-        pass
+        """发布视频"""
+        try:
+            # 检查视频文件
+            if not hasattr(self, 'video_path'):
+                TipWindow(self.parent, "❌ 请先选择视频文件").show()
+                return
+
+            # 获取输入内容
+            title = self.title_input.text().strip()
+            content = self.content_input.toPlainText().strip()
+            
+            if not all([title, content]):
+                TipWindow(self.parent, "❌ 请填写标题和内容").show()
+                return
+
+            # 获取cookie
+            account_manager = AccountManager()
+            cookies = account_manager.get_account_cookies()
+            if not cookies:
+                TipWindow(self.parent, "❌ 请先配置账号Cookie").show()
+                return
+
+            # 初始化客户端
+            xhs_manager = XhsClientManager()
+            client = xhs_manager.init_client(cookies)
+
+            # 验证cookie
+            if not xhs_manager.verify_cookies():
+                TipWindow(self.parent, "❌ Cookie已失效，请更新").show()
+                return
+
+            # 显示进度
+            self.progress.setRange(0, 100)
+            self.progress.setValue(0)
+            self.progress.show()
+            self.publish_btn.setEnabled(False)
+
+            # 上传前的准备工作 - 20%
+            self.update_progress(20, 100)
+
+            # 处理话题标签 - 40%
+            topics = []
+            tags = self.extract_tags(content)
+            for tag in tags[:3]:
+                topic = xhs_manager.get_topics(tag)
+                if topic:
+                    topics.append(topic)
+            self.update_progress(40, 100)
+
+            # 构建描述 - 60%
+            tags_str = ' '.join(['#' + tag for tag in tags])
+            hash_tags_str = ' '.join(['#' + topic['name'] + '[话题]#' for topic in topics])
+            full_desc = f"{content}\n\n{tags_str}\n{hash_tags_str}"
+            self.update_progress(60, 100)
+
+            # 检查是否定时发布
+            if self.schedule_checkbox.isChecked():
+                schedule_time = self.schedule_time.dateTime().toPyDateTime()
+                if schedule_time <= datetime.now():
+                    TipWindow(self.parent, "❌ 定时发布时间必须大于当前时间").show()
+                    return
+                    
+                # 添加到定时任务
+                self.add_schedule_task({
+                    'time': schedule_time,
+                    'video_path': self.video_path,
+                    'title': title,
+                    'desc': full_desc,
+                    'topics': topics
+                })
+                
+                TipWindow(self.parent, f"✅ 已添加到定时发布队列: {schedule_time}").show()
+                return
+
+            # 发布视频 - 80%
+            result = xhs_manager.publish_video(
+                video_path=self.video_path,
+                title=title,
+                desc=full_desc,
+                topics=topics
+            )
+            self.update_progress(80, 100)
+
+            # 保存历史记录 - 100%
+            self.save_publish_history({
+                'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'title': title,
+                'status': '发布成功',
+                'note': '发布成功',
+                'video_path': self.video_path,
+                'desc': full_desc
+            })
+            self.update_progress(100, 100)
+
+            TipWindow(self.parent, "✅ 视频发布成功").show()
+
+        except Exception as e:
+            TipWindow(self.parent, f"❌ 发布失败: {str(e)}").show()
+            self.save_publish_history({
+                'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'title': title,
+                'status': '发布失败',
+                'note': str(e),
+                'video_path': self.video_path
+            })
+
+        finally:
+            self.progress.hide()
+            self.publish_btn.setEnabled(True)
+
+    def extract_tags(self, content):
+        """从内容中提取标签"""
+        tags = []
+        words = content.split()
+        for word in words:
+            if word.startswith('#'):
+                tag = word.strip('#')
+                if tag:
+                    tags.append(tag)
+        return tags
+
+    def save_publish_history(self, history_data):
+        """保存发布历史"""
+        try:
+            history_file = Path(os.path.expanduser('~/.xhsai/publish_history.json'))
+            if not history_file.parent.exists():
+                history_file.parent.mkdir(parents=True)
+
+            # 读取现有历史
+            history = []
+            if history_file.exists():
+                with open(history_file, 'r', encoding='utf-8') as f:
+                    history = json.load(f)
+
+            # 添加新记录
+            history.append(history_data)
+
+            # 保存历史
+            with open(history_file, 'w', encoding='utf-8') as f:
+                json.dump(history, f, ensure_ascii=False, indent=2)
+
+        except Exception as e:
+            print(f"保存历史记录失败: {str(e)}")
         
     def generate_content(self):
         try:
@@ -395,4 +602,114 @@ class VideoPage(QWidget):
         finally:
             # 恢复按钮状态
             self.generate_btn.setEnabled(True)
-            self.generate_btn.setText("生成内容") 
+            self.generate_btn.setText("生成内容")
+
+    def update_progress(self, current, total):
+        """更新进度条"""
+        progress = int((current / total) * 100)
+        self.progress.setValue(progress)
+
+    def add_schedule_task(self, task):
+        """添加定时发布任务"""
+        try:
+            tasks_file = Path(os.path.expanduser('~/.xhsai/schedule_tasks.json'))
+            if not tasks_file.parent.exists():
+                tasks_file.parent.mkdir(parents=True)
+
+            # 读取现有任务
+            tasks = []
+            if tasks_file.exists():
+                with open(tasks_file, 'r', encoding='utf-8') as f:
+                    tasks = json.load(f)
+
+            # 添加新任务
+            tasks.append({
+                'time': task['time'].strftime("%Y-%m-%d %H:%M:%S"),
+                'video_path': task['video_path'],
+                'title': task['title'],
+                'desc': task['desc'],
+                'topics': task['topics'],
+                'status': 'pending'
+            })
+
+            # 保存任务
+            with open(tasks_file, 'w', encoding='utf-8') as f:
+                json.dump(tasks, f, ensure_ascii=False, indent=2)
+
+        except Exception as e:
+            print(f"保存定时任务失败: {str(e)}")
+
+    def preview_post(self):
+        """预览发布内容"""
+        try:
+            if not hasattr(self, 'video_path'):
+                TipWindow(self.parent, "❌ 请先选择视频文件").show()
+                return
+
+            title = self.title_input.text().strip()
+            content = self.content_input.toPlainText().strip()
+            
+            if not all([title, content]):
+                TipWindow(self.parent, "❌ 请填写标题和内容").show()
+                return
+
+            # 处理话题标签
+            tags = self.extract_tags(content)
+            tags_str = ' '.join(['#' + tag for tag in tags])
+            
+            # 显示预览对话框
+            preview = PreviewDialog(self)
+            preview.set_content(title, content, tags_str, self.video_path)
+            preview.exec()
+        except Exception as e:
+            TipWindow(self.parent, f"❌ 预览失败: {str(e)}").show()
+    
+    def update_progress(self, current, total):
+        """更新进度条"""
+        progress = int((current / total) * 100)
+        self.progress.setValue(progress)
+
+class PreviewDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.init_ui()
+        
+    def init_ui(self):
+        self.setWindowTitle("发布预览")
+        layout = QVBoxLayout(self)
+        
+        # 预览内容
+        self.title_label = QLabel()
+        self.content_text = QTextEdit()
+        self.content_text.setReadOnly(True)
+        
+        # 视频预览
+        self.video_widget = QLabel()
+        self.video_widget.setMinimumSize(400, 300)
+        
+        layout.addWidget(QLabel("标题:"))
+        layout.addWidget(self.title_label)
+        layout.addWidget(QLabel("内容:"))
+        layout.addWidget(self.content_text)
+        layout.addWidget(QLabel("视频预览:"))
+        layout.addWidget(self.video_widget)
+        
+        # 确认按钮
+        btn = QPushButton("确认")
+        btn.clicked.connect(self.accept)
+        layout.addWidget(btn)
+        
+    def set_content(self, title, content, tags, video_path):
+        self.title_label.setText(title)
+        self.content_text.setPlainText(f"{content}\n\n{tags}")
+        
+        # 显示视频第一帧
+        cap = cv2.VideoCapture(video_path)
+        ret, frame = cap.read()
+        if ret:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = frame.shape
+            bytes_per_line = ch * w
+            image = QImage(frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            self.video_widget.setPixmap(QPixmap.fromImage(image))
+        cap.release() 

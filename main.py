@@ -14,6 +14,9 @@ from src.core.pages.home import HomePage
 from src.core.pages.setting import SettingsPage
 from src.core.pages.tools import ToolsPage
 from src.core.pages.video import VideoPage
+from src.core.pages.cookie_manager import CookieManagerPage
+from src.core.pages.history import HistoryPage
+from src.core.pages.favorite import FavoritePage
 from src.logger.logger import Logger
 
 # 设置日志文件路径
@@ -150,10 +153,29 @@ class XiaohongshuUI(QMainWindow):
         settings_btn.setCheckable(True)
         settings_btn.clicked.connect(lambda: self.switch_page(3))
 
+        # 添加新的侧边栏按钮
+        cookie_btn = QPushButton("🔑")
+        cookie_btn.setCheckable(True)
+        cookie_btn.setToolTip("Cookie管理")
+        cookie_btn.clicked.connect(lambda: self.switch_page(4))
+        
+        history_btn = QPushButton("📋")
+        history_btn.setCheckable(True)
+        history_btn.setToolTip("发布历史")
+        history_btn.clicked.connect(lambda: self.switch_page(5))
+        
+        favorite_btn = QPushButton("⭐")
+        favorite_btn.setCheckable(True)
+        favorite_btn.setToolTip("收藏文案")
+        favorite_btn.clicked.connect(lambda: self.switch_page(6))
+
         sidebar_layout.addWidget(home_btn)
         sidebar_layout.addWidget(tools_btn)
         sidebar_layout.addWidget(video_btn)
         sidebar_layout.addWidget(settings_btn)
+        sidebar_layout.addWidget(cookie_btn)
+        sidebar_layout.addWidget(history_btn)
+        sidebar_layout.addWidget(favorite_btn)
         sidebar_layout.addStretch()
 
         # 添加侧边栏到主布局
@@ -168,12 +190,18 @@ class XiaohongshuUI(QMainWindow):
         self.tools_page = ToolsPage(self)
         self.video_page = VideoPage(self)
         self.settings_page = SettingsPage(self)
+        self.cookie_page = CookieManagerPage()
+        self.history_page = HistoryPage()
+        self.favorite_page = FavoritePage()
 
         # 将页面添加到堆叠窗口
         self.stack.addWidget(self.home_page)
         self.stack.insertWidget(1, self.tools_page)
         self.stack.insertWidget(2, self.video_page)
         self.stack.addWidget(self.settings_page)
+        self.stack.addWidget(self.cookie_page)
+        self.stack.addWidget(self.history_page)
+        self.stack.addWidget(self.favorite_page)
 
         # 创建浏览器线程
         self.browser_thread = BrowserThread()
@@ -341,6 +369,12 @@ class XiaohongshuUI(QMainWindow):
         except Exception as e:
             self.logger.error(f"关闭下载器时出错: {str(e)}")
 
+    def setup_connections(self):
+        """设置信号连接"""
+        self.browser_thread.login_success.connect(self.home_page.handle_poster_ready)
+        self.browser_thread.login_error.connect(self.home_page.handle_login_error)
+        self.browser_thread.preview_success.connect(self.home_page.handle_preview_result)
+        self.browser_thread.preview_error.connect(self.home_page.handle_preview_error)
 
 if __name__ == "__main__":
     try:
