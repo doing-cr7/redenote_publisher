@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://www.microsoft.com/windows)
 [![Version](https://img.shields.io/badge/version-1.0.0-orange.svg)](https://github.com/yourusername/xhs_ai_publisher/releases)
@@ -58,7 +58,7 @@
 
 ### 环境要求
 
-- Python 3.8+
+- Python 3.12+
 - Chrome 浏览器
 - 其他依赖见 requirements.txt
 
@@ -72,8 +72,8 @@
 
 1. **克隆项目**
 ```bash
-git clone https://github.com/yourusername/xhs_ai_publisher.git
-cd xhs_ai_publisher
+git clone https://github.com/doing-cr7/redenote_publisher.git
+cd redenote_publisher
 ```
 
 2. **安装依赖**
