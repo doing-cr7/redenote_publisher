@@ -29,20 +29,29 @@
 ## 📁 项目结构
 
 ```
-xhs_ai_publisher/
-├── src/                    # 源代码目录
-│   ├── core/              # 核心功能模块
-│   │   ├── processor/     # 内容处理模块
-│   │   ├── browser/       # 浏览器自动化
-│   │   └── pages/         # 界面页面
-│   ├── cron/              # 定时任务
-│   ├── logger/            # 日志模块
-│   └── config/            # 配置模块
-├── static/                # 静态资源
-├── test/                  # 测试目录
-├── build/                 # 构建输出
-├── main.py                # 主程序入口
-└── requirements.txt       # 依赖包列表
+/XiaohongshuHelper
+│
+├── main.py                  # 主程序入口
+├── requirements.txt         # 项目依赖文件
+├── README.md                # 项目说明文档
+│
+├── /ui                      # 用户界面相关文件
+│   ├── main_window.py       # 主窗口逻辑
+│   ├── video_upload_page.py # 视频上传页面
+│   ├── home_page.py         # 主页
+│   ├── tools_page.py        # 工具页面
+│   └── settings_page.py     # 设置页面
+│
+├── /api                     # API 相关逻辑
+│   └── llama_api.py         # 调用本地 LLaMA 接口的逻辑
+│
+├── /utils                   # 工具函数
+│   ├── logger.py            # 日志记录工具
+│   └── helpers.py           # 其他辅助函数
+│
+└── /assets                  # 资源文件
+    ├── styles.qss           # 样式表
+    └── icons                # 图标文件
 ```
 
 ## 🛠️ 安装与使用
@@ -89,22 +98,6 @@ python main.py
 5. 预览生成的内容和配图
 6. 确认无误后点击"预览发布"
 
-## 📦 快速使用
-
-如果您不想配置开发环境，可以直接下载打包好的 Windows 可执行程序：
-
-[百度网盘下载链接](https://pan.baidu.com/s/1rIQ-ZgyHYN_ncVXlery4yQ)  
-提取码: iqiy
-
-### 使用说明
-1. 下载并解压压缩包
-2. 运行文件夹中的 `easy_ui.exe`
-3. 按照界面提示操作即可
-
-### 注意事项
-- 仅支持 Windows 系统
-- 首次运行可能需要等待较长时间加载
-- 如遇到杀毒软件报警，请添加信任
 
 ## 📝 注意事项
 
@@ -120,10 +113,10 @@ python main.py
 ## 📞 联系方式
 
 ### 我新建了一个群聊，如果有任何问题或者需求，都可以进群沟通
-<img src="images/wechat_talking.jpg" width="200" height="200">
+<img src="images/wechat_talking.png" width="200" height="200">
 
-### 公众号
-<img src="images/mp_qr.jpg" width="200" height="200">
+### 公众号(暂时没有)
+<!-- <img src="images/mp_qr.jpg" width="200" height="200"> -->
 
 ---   
 
