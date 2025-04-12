@@ -8,7 +8,7 @@ class BrowserThread(QThread):
     # 添加信号
     login_status_changed = pyqtSignal(str, bool)  # 用于更新登录按钮状态
     preview_status_changed = pyqtSignal(str, bool)  # 用于更新预览按钮状态
-    login_success = pyqtSignal(object)  # 用于传递poster对象
+    login_success = pyqtSignal(object)  # 修改为传递 poster 对象
     login_error = pyqtSignal(str)  # 用于传递错误信息
     preview_success = pyqtSignal()  # 用于通知预览成功
     preview_error = pyqtSignal(str)  # 用于传递预览错误信息
@@ -31,6 +31,27 @@ class BrowserThread(QThread):
         # 关闭事件循环
         self.loop.close()
         
+    async def get_formatted_cookies(self):
+        """获取格式化的cookie字符串"""
+        try:
+            if not self.poster:
+                return None
+            
+            # 获取所有cookie
+            cookies = await self.poster.get_cookies()
+            
+            # 格式化cookie字符串
+            cookie_str = ';'.join([
+                f"{cookie['name']}={cookie['value']}"
+                for cookie in cookies
+                if cookie.get('domain', '').endswith('.xiaohongshu.com')
+            ])
+            
+            return cookie_str
+        except Exception as e:
+            print(f"获取cookie失败: {str(e)}")
+            return None
+
     async def async_run(self):
         """异步主循环"""
         while self.is_running:
@@ -41,7 +62,10 @@ class BrowserThread(QThread):
                         self.poster = XiaohongshuPoster()
                         await self.poster.initialize()
                         await self.poster.login(action['phone'])
+                        
+                        # 直接发送成功信号，不尝试获取cookie
                         self.login_success.emit(self.poster)
+                        
                     elif action['type'] == 'preview' and self.poster:
                         await self.poster.post_article(
                             action['title'],

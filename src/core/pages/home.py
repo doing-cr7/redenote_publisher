@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPixmap
@@ -8,6 +9,8 @@ from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit,
 from src.core.alert import TipWindow
 from src.core.processor.content import ContentGeneratorThread
 from src.core.processor.img import ImageProcessorThread
+from src.core.config.accounts import AccountManager
+from src.core.xhs.xhs_client import XhsClient
 
 class HomePage(QWidget):
     """主页类"""
@@ -15,11 +18,17 @@ class HomePage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
+        
+        # 初始化账号管理器 - 移到 setup_ui 之前
+        self.account_manager = AccountManager()
+        
         self.setup_ui()
+        
         # 初始化变量
         self.images = []
         self.image_list = []
         self.current_image_index = 0
+        
         # 创建占位图
         self.placeholder_photo = QPixmap(200, 200)
         self.placeholder_photo.fill(QColor('#f8f9fa'))
@@ -43,6 +52,12 @@ class HomePage(QWidget):
 
         # 创建右侧预览区域
         self.create_preview_section(content_layout)
+
+        # 尝试自动登录
+        if self.load_saved_cookie():
+            self.auto_login_label.setText("已自动登录")
+        else:
+            self.auto_login_label.setText("请登录")
 
     def create_login_section(self, parent_layout):
         """创建登录区域"""
@@ -99,6 +114,11 @@ class HomePage(QWidget):
         """)
         login_controls.addWidget(disclaimer_label)
 
+        # 添加自动登录提示
+        self.auto_login_label = QLabel()
+        self.auto_login_label.setStyleSheet("color: #666;")
+        login_controls.addWidget(self.auto_login_label)
+        
         login_controls.addStretch()
         login_layout.addLayout(login_controls)
         parent_layout.addWidget(login_frame)
@@ -414,12 +434,14 @@ class HomePage(QWidget):
 
     def login(self):
         try:
-            phone = self.phone_input.text()
-
+            phone = self.phone_input.text().strip()
             if not phone:
                 TipWindow(self.parent, "❌ 请输入手机号").show()
                 return
 
+            # 更新手机号配置
+            self.update_phone_config()
+            
             # 更新登录按钮状态
             self.parent.update_login_button("⏳ 登录中...", False)
 
@@ -430,19 +452,30 @@ class HomePage(QWidget):
             })
 
         except Exception as e:
-            TipWindow(self.parent, f"❌ 登录失败: {str(e)}").show()
+            self.handle_login_error(str(e))
 
     def handle_login_error(self, error_msg):
-        # 恢复登录按钮状态
-        self.parent.update_login_button("🚀 登录", True)
+        """处理登录错误"""
+        self.parent.update_login_button("🔑 登录", True)
         TipWindow(self.parent, f"❌ 登录失败: {error_msg}").show()
 
     def handle_poster_ready(self, poster):
-        """处理登录成功后的poster对象"""
-        self.parent.poster = poster
-        # 更新登录按钮状态
-        self.parent.update_login_button("✅ 已登录", False)
-        TipWindow(self.parent, "✅ 登录成功").show()
+        """处理登录成功"""
+        try:
+            # 主要登录功能
+            self.parent.poster = poster
+            self.parent.update_login_button("✅ 已登录", False)
+            self.parent.update_preview_button("🎯 预览发布", True)
+            TipWindow(self.parent, "✅ 登录成功").show()
+            
+            # 注意：XiaohongshuPoster 类自己会在登录成功后调用 _save_cookies 方法
+            # 我们不需要在这里尝试获取 cookie，因为 poster 已经处理了
+            print("登录成功，cookie 由 XiaohongshuPoster 自动保存")
+            
+        except Exception as e:
+            # 主要功能的错误才需要提示
+            print(f"登录处理失败: {str(e)}")
+            TipWindow(self.parent, f"❌ 登录失败: {str(e)}").show()
 
     def generate_content(self):
         try:
@@ -645,3 +678,74 @@ class HomePage(QWidget):
             self.parent.config.update_phone_config(new_phone)
         except Exception as e:
             self.parent.logger.error(f"更新手机号配置失败: {str(e)}")
+
+    def handle_login_success(self, cookie):
+        """处理登录成功"""
+        try:
+            if not cookie:
+                raise ValueError("Cookie为空")
+            
+            # 验证cookie格式
+            if not all(k in cookie for k in ['a1', 'web_session']):
+                raise ValueError("Cookie格式不正确")
+            
+            # 获取当前时间作为账号名称
+            account_name = f"account_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            # 保存 cookie 到配置
+            self.account_manager.set_account_cookies(cookie, account_name)
+            
+            # 显示成功提示
+            TipWindow(self.parent, "✅ 登录成功，Cookie已保存").show()
+            
+        except Exception as e:
+            TipWindow(self.parent, f"❌ Cookie保存失败: {str(e)}").show()
+
+    def handle_phone_login_success(self, phone, code):
+        """处理手机号登录成功"""
+        try:
+            # 使用手机号和验证码登录
+            xhs_client = XhsClient(sign=sign_local, timeout=60)
+            result = xhs_client.login_by_phone(phone, code)
+            
+            if result.get('success'):
+                # 获取格式化的cookie
+                cookie = xhs_client.get_formatted_cookies()
+                if not cookie:
+                    raise ValueError("获取Cookie失败")
+                
+                # 使用手机号作为账号名称
+                account_name = f"phone_{phone}"
+                
+                # 保存cookie
+                self.account_manager.set_account_cookies(cookie, account_name)
+                
+                TipWindow(self.parent, "✅ 登录成功，Cookie已保存").show()
+            else:
+                TipWindow(self.parent, "❌ 登录失败").show()
+            
+        except Exception as e:
+            TipWindow(self.parent, f"❌ 登录失败: {str(e)}").show()
+
+    def load_saved_cookie(self):
+        """尝试加载保存的cookie（可选功能）"""
+        try:
+            latest_account = self.account_manager.get_latest_account()
+            if latest_account:
+                cookie = self.account_manager.get_account_cookies(latest_account)
+                if cookie:
+                    try:
+                        xhs_client = XhsClient(cookies=cookie)
+                        if xhs_client.verify_cookie():
+                            self.parent.update_login_button("✅ 已登录", False)
+                            self.parent.update_preview_button("🎯 预览发布", True)
+                            
+                            if latest_account.startswith('phone_'):
+                                phone = latest_account.replace('phone_', '')
+                                self.phone_input.setText(phone)
+                            return True
+                    except:
+                        pass  # 静默失败，不影响使用
+        except Exception as e:
+            print(f"加载Cookie失败（不影响使用）: {str(e)}")  # 仅打印日志
+        return False
