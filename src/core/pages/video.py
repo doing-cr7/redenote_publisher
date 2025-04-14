@@ -7,12 +7,22 @@ import cv2
 import os
 import requests
 import json
+import configparser
+from time import sleep
 from src.config.config import Config
 from src.core.alert import TipWindow
 from src.core.config.accounts import AccountManager
 from src.core.xhs.client import XhsClientManager
 from datetime import datetime, timedelta
 from pathlib import Path
+from xhs import XhsClient
+from src.core.uploader.xhs_uploader.main import sign_local, beauty_print
+
+from conf import BASE_DIR
+
+config = configparser.RawConfigParser()
+config.read(Path(BASE_DIR / "src" / "core" / "uploader" / "xhs_uploader" / "accounts.ini"))
+
 
 # 首先定义 PreviewDialog 类
 class PreviewDialog(QDialog):
@@ -137,6 +147,11 @@ class VideoPage(QWidget):
         self.content_input = QTextEdit()
         self.content_input.setPlaceholderText("请输入内容")
         
+        # 添加标签输入区域
+        tags_label = QLabel("🏷️ 标签:")
+        self.tags_input = QLineEdit()
+        self.tags_input.setPlaceholderText("请输入标签，用逗号分隔（例如：生活,美食,探店）")
+        
         # 生成内容按钮
         self.generate_btn = QPushButton("生成内容")
         self.generate_btn.clicked.connect(self.generate_content)
@@ -144,6 +159,8 @@ class VideoPage(QWidget):
         left_layout.addWidget(title_frame)
         left_layout.addWidget(content_label)
         left_layout.addWidget(self.content_input)
+        left_layout.addWidget(tags_label)
+        left_layout.addWidget(self.tags_input)
         left_layout.addWidget(self.generate_btn)
         
         # 右侧视频预览区域
@@ -355,113 +372,115 @@ class VideoPage(QWidget):
     def publish_video(self):
         """发布视频"""
         try:
-            # 检查视频文件
-            if not hasattr(self, 'video_path'):
-                TipWindow(self.parent, "❌ 请先选择视频文件").show()
-                return
+            # 显示进度条并禁用发布按钮
+            # self.progress.setRange(0, 100)
+            # self.progress.setValue(0)
+            # self.progress.show()
+            # self.publish_btn.setEnabled(False)
+            # self.publish_btn.setText("发布中...")
 
-            # 获取输入内容
+            # 1. 获取输入内容
             title = self.title_input.text().strip()
             content = self.content_input.toPlainText().strip()
-            
-            if not all([title, content]):
-                TipWindow(self.parent, "❌ 请填写标题和内容").show()
-                return
+            video_path = getattr(self, 'video_path', None)
+            tags = [tag.strip() for tag in self.tags_input.text().split(',') if tag.strip()]
 
-            # 获取cookie
-            account_manager = AccountManager()
-            cookies = account_manager.get_account_cookies()
+            # 2. 验证输入 - 20%
+            if not all([title, content, video_path]):
+                raise ValueError("请填写完整信息")
+            # self.update_progress(20, "验证输入完成")
+
+            # 3. 获取 cookie
+            cookies = config['account1']['cookies']
             if not cookies:
-                TipWindow(self.parent, "❌ 请先配置账号Cookie").show()
-                return
+                raise ValueError("请先配置账号Cookie")
 
-            # 初始化客户端
-            xhs_manager = XhsClientManager()
-            client = xhs_manager.init_client(cookies)
+            # 4. 初始化客户端并验证 cookie
+            xhs_client = XhsClient(cookies, sign=sign_local, timeout=60)
+            try:
+                xhs_client.get_video_first_frame_image_id("3214")
+            except:
+                raise ValueError("cookie 已失效，请更新")
 
-            # 验证cookie
-            if not xhs_manager.verify_cookies():
-                TipWindow(self.parent, "❌ Cookie已失效，请更新").show()
-                return
-
-            # 显示进度
-            self.progress.setRange(0, 100)
-            self.progress.setValue(0)
-            self.progress.show()
-            self.publish_btn.setEnabled(False)
-
-            # 上传前的准备工作 - 20%
-            self.update_progress(20, 100)
-
-            # 处理话题标签 - 40%
-            topics = []
-            tags = self.extract_tags(content)
-            for tag in tags[:3]:
-                topic = xhs_manager.get_topics(tag)
-                if topic:
-                    topics.append(topic)
-            self.update_progress(40, 100)
-
-            # 构建描述 - 60%
+            # 处理标签 - 40%
+            # self.update_progress(40, "处理标签中...")
             tags_str = ' '.join(['#' + tag for tag in tags])
-            hash_tags_str = ' '.join(['#' + topic['name'] + '[话题]#' for topic in topics])
-            full_desc = f"{content}\n\n{tags_str}\n{hash_tags_str}"
-            self.update_progress(60, 100)
+            hash_tags_str = ''
+            hash_tags = []
+            topics = []
 
-            # 检查是否定时发布
+            # 获取hashtag
+            for i, tag in enumerate(tags[:3]):
+                topic_official = xhs_client.get_suggest_topic(tag)
+                if topic_official:
+                    topic_official[0]['type'] = 'topic'
+                    topic_one = topic_official[0]
+                    hash_tag_name = topic_one['name']
+                    hash_tags.append(hash_tag_name)
+                    topics.append(topic_one)
+                # 更新标签处理进度
+                # self.update_progress(40 + (i + 1) * 5, f"处理标签: {tag}")
+
+            hash_tags_str = ' ' + ' '.join(['#' + tag + '[话题]#' for tag in hash_tags])
+
+            # 获取定时发布时间 - 60%
+            # self.update_progress(60, "准备发布...")
+            post_time = None
             if self.schedule_checkbox.isChecked():
                 schedule_time = self.schedule_time.dateTime().toPyDateTime()
                 if schedule_time <= datetime.now():
-                    TipWindow(self.parent, "❌ 定时发布时间必须大于当前时间").show()
-                    return
-                    
-                # 添加到定时任务
-                self.add_schedule_task({
-                    'time': schedule_time,
-                    'video_path': self.video_path,
-                    'title': title,
-                    'desc': full_desc,
-                    'topics': topics
-                })
-                
-                TipWindow(self.parent, f"✅ 已添加到定时发布队列: {schedule_time}").show()
-                return
+                    raise ValueError("定时发布时间必须大于当前时间")
+                post_time = schedule_time.strftime("%Y-%m-%d %H:%M:%S")
+                self.publish_btn.setText("设置定时发布中...")
 
             # 发布视频 - 80%
-            result = xhs_manager.publish_video(
-                video_path=self.video_path,
-                title=title,
-                desc=full_desc,
-                topics=topics
+            # self.update_progress(80, "发布中...")
+            note = xhs_client.create_video_note(
+                title=title[:20],
+                video_path=str(video_path),
+                desc=title + tags_str + hash_tags_str,
+                topics=topics,
+                is_private=False,
+                post_time=post_time  # 添加定时发布参数
             )
-            self.update_progress(80, 100)
 
-            # 保存历史记录 - 100%
-            self.save_publish_history({
-                'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'title': title,
-                'status': '发布成功',
-                'note': '发布成功',
-                'video_path': self.video_path,
-                'desc': full_desc
-            })
-            self.update_progress(100, 100)
+            beauty_print(note)
+            self.update_progress(90, "处理发布结果...")
+            sleep(30)  # 避免风控
 
-            TipWindow(self.parent, "✅ 视频发布成功").show()
+            # # 保存历史记录 - 100%
+            # self.save_publish_history({
+            #     'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            #     'title': title,
+            #     'status': '发布成功',
+            #     'note': '发布成功',
+            #     'video_path': video_path,
+            #     'desc': title + tags_str + hash_tags_str,
+            #     'scheduled_time': post_time
+            # })
+            # self.update_progress(100, "发布完成")
+
+            # 显示成功提示
+            success_msg = "✅ 视频发布成功"
+            if post_time:
+                success_msg = f"✅ 视频已设置定时发布: {post_time}"
+            TipWindow(self.parent, success_msg).show()
 
         except Exception as e:
             TipWindow(self.parent, f"❌ 发布失败: {str(e)}").show()
             self.save_publish_history({
                 'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'title': title,
+                'title': title if 'title' in locals() else '',
                 'status': '发布失败',
                 'note': str(e),
-                'video_path': self.video_path
+                'video_path': getattr(self, 'video_path', '')
             })
 
-        finally:
-            self.progress.hide()
-            self.publish_btn.setEnabled(True)
+        # finally:
+        #     # 恢复按钮状态
+        #     self.progress.hide()
+        #     self.publish_btn.setEnabled(True)
+        #     self.publish_btn.setText("发布视频")
 
     def extract_tags(self, content):
         """从内容中提取标签"""
@@ -604,10 +623,16 @@ class VideoPage(QWidget):
             self.generate_btn.setEnabled(True)
             self.generate_btn.setText("生成内容")
 
-    def update_progress(self, current, total):
-        """更新进度条"""
-        progress = int((current / total) * 100)
-        self.progress.setValue(progress)
+    def update_progress(self, value, status_text=None):
+        """更新进度条和状态文本"""
+        try:
+            # 确保 value 是整数
+            if isinstance(value, (int, float)):
+                self.progress.setValue(int(value))
+            if status_text:
+                self.info_label.setText(status_text)
+        except Exception as e:
+            print(f"更新进度失败: {str(e)}")
 
     def add_schedule_task(self, task):
         """添加定时发布任务"""
@@ -663,53 +688,8 @@ class VideoPage(QWidget):
             preview.exec()
         except Exception as e:
             TipWindow(self.parent, f"❌ 预览失败: {str(e)}").show()
-    
+
     def update_progress(self, current, total):
         """更新进度条"""
         progress = int((current / total) * 100)
-        self.progress.setValue(progress)
-
-class PreviewDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.init_ui()
-        
-    def init_ui(self):
-        self.setWindowTitle("发布预览")
-        layout = QVBoxLayout(self)
-        
-        # 预览内容
-        self.title_label = QLabel()
-        self.content_text = QTextEdit()
-        self.content_text.setReadOnly(True)
-        
-        # 视频预览
-        self.video_widget = QLabel()
-        self.video_widget.setMinimumSize(400, 300)
-        
-        layout.addWidget(QLabel("标题:"))
-        layout.addWidget(self.title_label)
-        layout.addWidget(QLabel("内容:"))
-        layout.addWidget(self.content_text)
-        layout.addWidget(QLabel("视频预览:"))
-        layout.addWidget(self.video_widget)
-        
-        # 确认按钮
-        btn = QPushButton("确认")
-        btn.clicked.connect(self.accept)
-        layout.addWidget(btn)
-        
-    def set_content(self, title, content, tags, video_path):
-        self.title_label.setText(title)
-        self.content_text.setPlainText(f"{content}\n\n{tags}")
-        
-        # 显示视频第一帧
-        cap = cv2.VideoCapture(video_path)
-        ret, frame = cap.read()
-        if ret:
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = frame.shape
-            bytes_per_line = ch * w
-            image = QImage(frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-            self.video_widget.setPixmap(QPixmap.fromImage(image))
-        cap.release() 
+        self.progress.setValue(progress) 

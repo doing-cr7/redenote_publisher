@@ -478,11 +478,17 @@ class HomePage(QWidget):
                     phone = self.phone_input.text().strip()
                     account_name = f"phone_{phone}" if phone else f"account_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                     
-                    # 直接保存到配置文件
-                    if account_name not in self.account_manager.config:
-                        self.account_manager.config[account_name] = {}
-                    self.account_manager.config[account_name]['cookies'] = filtered_cookie
-                    self.account_manager.save_config()
+                    # 保存为 cookie 管理页面需要的格式
+                    cookie_data = {
+                        'cookies': filtered_cookie  # 使用 cookies 作为 key
+                    }
+                    
+                    # 保存到配置
+                    if account_name not in self.parent.config.config:
+                        self.parent.config.config[account_name] = {}
+                    self.parent.config.config[account_name].update(cookie_data)
+                    self.parent.config.save_config()
+                    
                     print(f"成功保存过滤后的 cookie: {account_name}")
                 except Exception as e:
                     print(f"保存过滤后的 cookie 失败（不影响主功能）: {str(e)}")
