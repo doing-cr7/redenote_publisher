@@ -532,19 +532,26 @@ class VideoPage(QWidget):
             
             # 构建提示词
             prompt = f"""
-            你现在是一个专业的小红书视频文案写手。请根据以下关键词生成一个视频文案，包括标题和正文。
-
-            关键词: {content}
-
-            要求：
-            1. 以 JSON 格式返回，包含两个字段：title（标题）和 content（正文）
-            2. 标题要简短有力，最好带emoji，能吸引用户点击
-            3. 正文要活泼生动，适合视频内容展示
-            4. 增加3-5个相关的话题标签
-            5. 适当使用emoji增加活力
-            6. 确保整体风格符合小红书调性
-
-            请直接返回 JSON 格式的内容，不要有其他额外的文字。
+                你是一个专业的小红书文案写手。请根据以下关键词直接生成一篇可以发布的小红书文案。
+                
+                关键词: {content}
+                
+                要求：
+                1. 直接生成标题、正文内容和标签，不要生成示例或模板
+                2. 标题要简短有力，最好带emoji，能吸引用户点击
+                3. 正文要活泼生动，适合视频内容展示
+                4. 使用"家人们"、"姐妹们"等亲和的称呼
+                5. 多用"啊啊啊"、"太太太"等语气词增加活力
+                6. 标签要相关且吸引人，5-10个即可
+                
+                返回格式：
+                {{
+                    "title": "标题（带emoji，15字以内）",
+                    "content": "正文内容（活泼生动，有吸引力）",
+                    "tags": "标签1,标签2,标签3,标签4,标签5"
+                }}
+                
+                请直接返回 JSON 格式的内容，不要有其他额外的文字。
             """
             
             # 调用本地 Ollama API
@@ -581,15 +588,22 @@ class VideoPage(QWidget):
                 generated_data = json.loads(response_text)
                 generated_title = generated_data.get('title', '')
                 generated_content = generated_data.get('content', '')
+                generated_tags = generated_data.get('tags', '')  # 获取标签
                 
                 if not generated_title or not generated_content:
                     raise ValueError("生成的内容格式不正确")
                     
+                # 更新界面
+                self.title_input.setText(generated_title)
+                self.content_input.setPlainText(generated_content)
+                self.tags_input.setText(generated_tags)  # 设置标签
+                
             except (json.JSONDecodeError, ValueError) as e:
                 # 如果不是JSON格式，尝试智能分割文本
                 lines = response_text.split('\n')
                 generated_title = ""
                 generated_content = []
+                generated_tags = []
                 
                 for line in lines:
                     line = line.strip()
@@ -597,16 +611,19 @@ class VideoPage(QWidget):
                         continue
                     if not generated_title:
                         generated_title = line
+                    elif line.startswith('#'):  # 识别标签
+                        generated_tags.append(line.strip('#'))
                     else:
                         generated_content.append(line)
                 
                 generated_content = '\n'.join(generated_content) if generated_content else response_text
                 if not generated_title:
                     generated_title = "视频分享"
-            
-            # 更新界面
-            self.title_input.setText(generated_title)
-            self.content_input.setPlainText(generated_content)
+                
+                # 更新界面
+                self.title_input.setText(generated_title)
+                self.content_input.setPlainText(generated_content)
+                self.tags_input.setText(', '.join(generated_tags))  # 设置标签
             
             # 保存当前作者名称
             current_author = self.author_input.text().strip()
